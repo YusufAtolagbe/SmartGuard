@@ -1,151 +1,104 @@
-/*DETECTS AN INTRUSION FROM PIR SENSOR (using interrupts) THEN SENDS A MESSAGE TO A TELEGRAM BOT (yumidebot) SMARTGUARD.
-*/
+# SmartGuard
 
-///INCLUDES
-#include <WiFi.h>      //not necessary to include this
-#include <WiFiManager.h>
-#include <WiFiClientSecure.h>
-#include <UniversalTelegramBot.h>
-#include <ArduinoJson.h>
+SmartGuard is an IoT-based home intrusion detection system built using the ESP32 microcontroller. It detects human movement using a Passive Infrared (PIR) sensor and instantly notifies the homeowner through a Telegram bot over a secure Wi-Fi connection.
 
-/////////DEFINES///////////////////////////////////////////////////////
-#define BOT_TOKEN "" 
-uint8_t PIR_PIN  =13;  //PIR PIN
-uint8_t BUZZER_PIN  =23;    //buzzer
+The project demonstrates how low-cost embedded hardware can be combined with cloud messaging services to provide real-time home security alerts.
 
+---
 
-String USER_CHAT_ID = ""; //user chat id for telegrambot
-   
+## Features
 
-////CONSTANNTS AND INITIALIZATIONS////////////////////////
-WiFiClientSecure secured_client;
-UniversalTelegramBot bot(BOT_TOKEN, secured_client);
+- Human motion detection using a PIR sensor
+- Instant Telegram notifications when an intrusion is detected
+- Secure communication with the Telegram Bot API using HTTPS/TLS
+- Wi-Fi provisioning using WiFiManager (no hardcoded Wi-Fi credentials)
+- Remote arming and disarming through Telegram commands
+- Local audible alarm using a buzzer
+- Interrupt-driven motion detection for efficient event handling
 
-volatile uint8_t task_num = 0;
-volatile uint16_t interrupt = 0; //debugging
+---
 
+## Hardware Used
 
-/////ISR///////////////////////
-void IRAM_ATTR PIR_ISR() {
-  task_num = 1;
-  interrupt++;
-  }
+- ESP32 Development Board
+- PIR Motion Sensor
+- Active Buzzer
+- Wi-Fi Network
 
+---
 
-//////FUNCTIONS/////////////////////////////////////////////////////////
-void IntrusionDetected(){      //called during an intrusion detectioN 
-    bot.sendMessage(USER_CHAT_ID, "🔔*INTRUSION DETCTED*, GO CHECK IT OUT OR CALL THE POLICE NOW!", "Markdown"); 
-    Serial.write("\n Alert sent");
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(1000);
-    digitalWrite(BUZZER_PIN, LOW);
-} //endfunction
+## Software Libraries
 
+- WiFiManager
+- UniversalTelegramBot
+- WiFiClientSecure
+- ArduinoJson
 
-///nothing executes
-void Nothing(){}
+---
 
+## How It Works
 
-///function pointer
-void (*tasks[2])(void); //an array if two function pointers, one will point to nothing the other will point to intrusion detected.
+When powered on, SmartGuard automatically attempts to connect to a previously saved Wi-Fi network. If no saved network is available, it creates a temporary Wi-Fi access point that allows the user to configure the device without modifying the source code.
 
-void setup() {
-  Serial.begin(115200);
-  Serial.write("\nSetup");
-  pinMode(PIR_PIN, INPUT_PULLUP);  //initialize pins
-  pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
-  //WiFiManager for initial Wi-Fi setup
-WiFiManager wm;
+After connecting to the internet, the ESP32 synchronizes its system time using an NTP server. This is required for validating Telegram's SSL certificate and establishing a secure HTTPS connection.
 
-//NOTE: for the code below, autoconnect tries to connect to any saved network, if it fails after 30 seconds,
-        //it creates a temporary access point(yumidesetup.com) that you can connect to.
+The user then sends the `/start` command to the Telegram bot. Once authenticated, SmartGuard stores the user's chat ID and enables remote control through Telegram.
 
-if (!wm.autoConnect("yumidesetup.com")) {     //if unsuccessful
+The system can then be armed or disarmed using the following commands:
 
-  Serial.println("Initial connection failed.");  //DEBUGGING 
-  Serial.println("Waiting 1 minute for SmartGuard to connect to WIFI..."); //DEBUGGING
-  unsigned long start_attempt_time = millis();
- // for 60 seconds keep checking if Wifi is connected
-  while((millis()-start_attempt_time) < 60000){
-    delay(100);
-    if (WiFi.status() == WL_CONNECTED){           //if wifi is connected
-      Serial.println("\nWIFI connection successful"); //debugging
-      break;
-    } //end if    
-  } //end while
-   
-  if (WiFi.status() != WL_CONNECTED){       // if wifi is not connected
-     Serial.println("\n Connection unsuccessful after 1 minute, restarting device..."); //debugging
-     ESP.restart();
-   } //end if
-   
-} //end if
+- `/on` – Enables intrusion detection
+- `/off` – Disables intrusion detection
 
+When the system is armed, the PIR sensor continuously monitors for human movement. Rather than constantly polling the sensor, SmartGuard uses hardware interrupts. As soon as motion is detected, the interrupt service routine sets a task flag, allowing the main program loop to safely handle the event.
 
-secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT); // Add root certificate for api.telegram.org  
-                                                     //this basically verifies that we are talking to telegram
-Serial.print("Retrieving time: ");    ///DEBUGGING
-configTime(0, 0, "pool.ntp.org"); //get UTC time via NTP //needed for certificte validation (for esp32 to trust the connection).
-time_t now = time(nullptr);       //gives us the current time in seconds since 1970
-while (now < 24 * 3600)          //this wll evaluate to false coz 24*3600 = 1 day in seconds so if now is less than that,
-//then we are not yet in 1970
-{
-  Serial.print(".");
-  delay(100);
-  now = time(nullptr);
-}
-Serial.println(now);
-Serial.println("Waiting for user to send /start to the bot...");
+When an intrusion is confirmed, SmartGuard:
 
-tasks[0] = Nothing;  //make it do nothing
-tasks[1] = IntrusionDetected;   //attach IntrusionDetcted to it
+1. Sends an intrusion alert to the authorized Telegram user.
+2. Activates the local buzzer for an audible warning.
+3. Returns to monitoring for future events.
 
-} //end setup
+This interrupt-driven architecture keeps the interrupt service routine lightweight while allowing network communication to occur safely in the main program.
 
+---
 
-void loop() {
-char string_buffer[128];
-delay(100);
-static bool start_received = false; //turn_on_off=true;//checks if start has been sent and on/off messages have been sent by user.
-int num_new_messages = bot.getUpdates(bot.last_message_received + 1); //gets the latest messages/message since the last 
-                                                                    //time it checked.
-//last message received returns the id of the last messae received before now, getUpdates checks for the number of new messages 
-//received since the specified chatid, and stores the message/s in bot.messages.
+## Project Structure
 
-if (num_new_messages) {
-  for (uint8_t i = 0; i < num_new_messages; i++) {
-    String ChatId = bot.messages[i].chat_id.c_str();
-    const char* text = bot.messages[i].text.c_str();
-    if (strcmp(text, "/start") == 0 && !start_received) {        //if user sends start
-      USER_CHAT_ID = ChatId;
-      bot.sendMessage(USER_CHAT_ID, "*SMARTGUARD ACTIVE ✅*\nSend /on (lowercase) to enable alerts and /off (lowercase)"
-      "to disable them.", "Markdown");
-      attachInterrupt(digitalPinToInterrupt(PIR_PIN), PIR_ISR, FALLING); //attach interrupts to PIR sensor
-      Serial.write("\nInterrupt assigned to PIR pin");
-      start_received = true; // prevent further /start processing
-      
-    } //end if 
-    
-    else if ( strcmp(text, "/on") == 0 && ChatId == USER_CHAT_ID ){ //if user sends on
-      bot.sendMessage(USER_CHAT_ID, "🛡️ *SmartGuard Armed.* Intrusion detection is now active.", "Markdown");
-      attachInterrupt(digitalPinToInterrupt(PIR_PIN), PIR_ISR, FALLING); //attach interrupts to PIR sensor
-      Serial.write("\nInterrupt assigned to PIR pin");
-    } //end elseif
-     
-    else if (strcmp(text, "/off") == 0 && ChatId == USER_CHAT_ID ){ //if user sends off
-      bot.sendMessage(USER_CHAT_ID, "🔕 *SmartGuard Disarmed.* Intrusion detection is now off.", "Markdown");
-      detachInterrupt(digitalPinToInterrupt(PIR_PIN));   //detach interupts from PIR sensor
-      Serial.write("\nDetached Interrupts from PIR pin");
-      task_num = 0;   //call Nothing
-    } //end elseif
-  } //end for
-}   //end if
+The firmware consists of four major components:
 
-tasks[task_num](); //call whichever function is to be called
-task_num = 0; //RESET BACK TO ZERO
-sprintf(string_buffer, "\nloop\ninterrupt = %d\t task_num = %d", interrupt, task_num);
-Serial.write(string_buffer); 
+- **Wi-Fi Management** – Handles wireless network connection and configuration.
+- **Telegram Interface** – Processes user commands and sends intrusion alerts.
+- **Interrupt Handler** – Detects motion events from the PIR sensor.
+- **Intrusion Task** – Executes the notification and alarm routine.
 
+---
 
-} //end loop
+## Applications
+
+SmartGuard can be used in:
+
+- Homes
+- Offices
+- Small businesses
+- Laboratories
+- Warehouses
+- Remote monitoring applications
+
+---
+
+## Future Improvements
+
+Potential enhancements include:
+
+- Camera integration using the ESP32-CAM
+- Event logging
+- Cloud dashboard
+- Multiple authorized users
+- Battery backup monitoring
+- Mobile application
+- Image capture upon intrusion detection
+
+---
+
+## License
+
+This project is released under the MIT License.
