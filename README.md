@@ -9,7 +9,7 @@
 #include <ArduinoJson.h>
 
 /////////DEFINES///////////////////////////////////////////////////////
-#define BOT_TOKEN "7882867268:AAERfFr5VV5BKfi2Za2j_mpiARQFliw2OM8" 
+#define BOT_TOKEN "" 
 uint8_t PIR_PIN  =13;  //PIR PIN
 uint8_t BUZZER_PIN  =23;    //buzzer
 
